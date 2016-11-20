@@ -1,4 +1,5 @@
 #!/bin/sh
+make distclean
 aclocal
 autoconf
 autoheader
