@@ -42,7 +42,7 @@ static void *handle_request(void *argv)
 	fd_set scan_fd;								/* 侦听描述符集合 */
 	/* 阻塞1s后超时返回 */ 
 	struct timeval timeout = {
-		.tv_sec = 10, 
+		.tv_sec = 1, 
 		.tv_usec = 0}; 					     
 	int index = 0;
 	int err  = -1;
@@ -64,7 +64,7 @@ static void *handle_request(void *argv)
 			}
 		}
 		/* select等待 */
-		err = select(maxfd + 1, &scan_fd, (fd_set *)NULL, (fd_set *)NULL, &timeout);		
+		err = select(maxfd + 1, &scan_fd, (fd_set *)NULL, (fd_set *)NULL, (struct timeval *)&timeout);		
 		switch(err)
 		{
 			case 0:			/* 超时 */
