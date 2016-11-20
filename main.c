@@ -11,7 +11,7 @@
 
 
 #define BUFF_LEN 		1024
-#define SERVER_PORT 	8888		/* 服务器端口号 */
+#define SERVER_PORT 	51000		/* 服务器端口号 */
 #define BACKLOG 		5
 #define CLIENT_NUM 		20			/* 最大支持客户端数量 */
 
@@ -82,13 +82,18 @@ static void *handle_request(void *argv)
 					{
 						nByte = recv(client.list[index].fd, buff, BUFF_LEN, 0);
 						/* 接收发送方数据 */
-						if(nByte > 0 && !strncmp(buff, "TIME", 4))
+						if(nByte > 0)
 						{
-							now = time(NULL);		/* 当前时间 */
-							/* 将时间复制入缓冲区 */
-							sprintf(buff, "%24s\r\n", ctime(&now));
-							/* 发送数据 */
-							send(client.list[index].fd, buff, strlen(buff), 0);
+							buff[nByte] = '\0';
+							printf("From %s:%d ->[%s]\n",inet_ntoa(client.list[index].sin_addr), client.list[index].sin_port, buff);
+							if(!strncmp(buff, "TIME", 4))
+							{
+								now = time(NULL);		/* 当前时间 */
+								/* 将时间复制入缓冲区 */
+								sprintf(buff, "%24s\r\n", ctime(&now));
+								/* 发送数据 */
+								send(client.list[index].fd, buff, strlen(buff), 0);
+							}
 						}
 						else if(nByte <= 0)
 						{
