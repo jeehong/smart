@@ -58,12 +58,11 @@ static void *handle_request(void *argv)
 			{
 				FD_SET(client.list[index].fd, &scan_fd);	/* 放入集合 */
 				if(maxfd < client.list[index].fd)			/* 更新最大文件描述符值 */
-				{
 					maxfd = client.list[index].fd;
-				}
 			}
 		}
 		/* select等待 */
+		timeout.tv_sec = 1;
 		err = select(maxfd + 1, &scan_fd, (fd_set *)NULL, (fd_set *)NULL, (struct timeval *)&timeout);		
 		switch(err)
 		{
