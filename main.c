@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -13,28 +14,116 @@
 #define BUFF_LEN 		1024
 #define SERVER_PORT 	51000		/* 服务器端口号 */
 #define BACKLOG 		5
-#define CLIENT_NUM 		20			/* 最大支持客户端数量 */
 
 typedef struct _client_info
 {
-	int fd; 
-	unsigned short sin_port;
-    struct in_addr sin_addr;
+	int fd; 					/* 客户端socket套接字 */
+	unsigned short sin_port;	/* 客户端port */
+    struct in_addr sin_addr;	/* 客户端IP */
 } CLIENT_INFO_t;
 
 typedef struct _client_list
 {
-	struct _client_info list[CLIENT_NUM];	
-	unsigned short num;
+	CLIENT_INFO_t info;	
+	struct _client_list *pnext;
 } CLIENT_LIST_t;
 
 /* 
  * 可连接客户端的文件描述符数组 
  */
-static struct _client_list client;
+static CLIENT_LIST_t *pclient = NULL;
+
+/*
+ * 0: success
+ * -1: error
+ */
+static int new_client_register(int fd, unsigned short port, struct in_addr ip)
+{
+    static CLIENT_LIST_t *plistlast = NULL;	
+    CLIENT_LIST_t *plistnew = NULL;
+    int ret = -1;
+	
+	plistnew = (CLIENT_LIST_t *)malloc(sizeof(CLIENT_LIST_t));
+	if(plistnew != NULL)
+	{
+		if(pclient == NULL)
+			pclient = plistnew;
+		else
+		{
+			plistlast = pclient;	
+			while(plistlast->pnext != NULL) 	/* 永远指向最后一个链表成员 */
+				plistlast = plistlast->pnext;
+
+			plistlast->pnext = plistnew;
+		}
+		plistnew->info.fd = fd;
+		plistnew->info.sin_addr = ip;
+		plistnew->info.sin_port = port;
+		plistnew->pnext = NULL;
+		ret = 0;
+	}
+	printf("Current member: ");
+	plistlast = pclient;	
+	while(plistlast != NULL) 	/* 永远指向最后一个链表成员 */
+	{
+		printf("%d ", plistlast->info.fd);
+		plistlast = plistlast->pnext;
+	}
+	printf("\n");
+	
+	return ret;
+}
+
+/*
+ * sock: 需要移除的套接字
+ */
+static int client_unregister(const int sock)
+{
+	CLIENT_LIST_t *index = pclient;
+	CLIENT_LIST_t *rmobj = NULL;	/* 需要移除的节点 */
+	CLIENT_LIST_t *pre = pclient;
+
+	for(; index != NULL; index = index->pnext)
+	{
+		if(index->info.fd == sock)
+		{
+			rmobj = index;
+
+			if(rmobj == pclient)
+			{
+				if(rmobj->pnext != NULL)
+					pclient = rmobj->pnext;
+				else
+					pclient = NULL;
+			}
+			else
+			{
+				/* 如果移除的是链表最后一个成员 */
+				if(rmobj->pnext == NULL)
+					pre->pnext = NULL;
+				else
+					pre->pnext = rmobj->pnext;				
+			}
+	
+			free((CLIENT_LIST_t *)rmobj);
+			break;
+		}
+		
+		pre = index;
+	}
+	printf("Current member: ");
+	index = pclient;	
+	while(index != NULL) 	/* 永远指向最后一个链表成员 */
+	{
+		printf("%d ", index->info.fd);
+		index = index->pnext;
+	}
+	printf("\n");
+}
 
 static void *handle_request(void *argv)
 {	
+	CLIENT_LIST_t *index = NULL;
 	time_t now;									/* 时间 */
 	char buff[BUFF_LEN];						/* 收发数据缓冲区 */
 	int nByte = 0;
@@ -44,7 +133,6 @@ static void *handle_request(void *argv)
 	struct timeval timeout = {
 		.tv_sec = 1, 
 		.tv_usec = 0}; 					     
-	int index = 0;
 	int err  = -1;
 	
 	for(;;)
@@ -52,14 +140,11 @@ static void *handle_request(void *argv)
 		/* 最大文件描述符值初始化为-1 */		
 		maxfd = -1;
 		FD_ZERO(&scan_fd);									/* 清零文件描述符集合 */
-		for(index = 0; index < CLIENT_NUM; index++)			/* 将文件描述符放入集合 */
+		for(index = pclient; index != NULL; index = index->pnext)			/* 将文件描述符放入集合 */
 		{
-			if(client.list[index].fd != -1)					/* 合法的文件描述符 */
-			{
-				FD_SET(client.list[index].fd, &scan_fd);	/* 放入集合 */
-				if(maxfd < client.list[index].fd)			/* 更新最大文件描述符值 */
-					maxfd = client.list[index].fd;
-			}
+			FD_SET(index->info.fd, &scan_fd);	/* 放入集合 */
+			if(maxfd < index->info.fd)			/* 更新最大文件描述符值 */
+				maxfd = index->info.fd;
 		}
 		/* select等待 */
 		timeout.tv_sec = 1;
@@ -71,37 +156,34 @@ static void *handle_request(void *argv)
 			case -1:		/* 错误发生 */
 				break;
 			default:		/* 有可读套接字文件描述符 */
-				if(client.num <= 0)
-					break;
-				for(index = 0; index < CLIENT_NUM; index++)
+				for(index = pclient; index != NULL; index = index->pnext)
 				{
 					/* 查找激活的文件描述符 */
-					if(client.list[index].fd != -1 
-						&& FD_ISSET(client.list[index].fd, &scan_fd))
+					if(FD_ISSET(index->info.fd, &scan_fd))
 					{
-						nByte = recv(client.list[index].fd, buff, BUFF_LEN, 0);
+						nByte = recv(index->info.fd, buff, BUFF_LEN, 0);
 						/* 接收发送方数据 */
 						if(nByte > 0)
 						{
 							buff[nByte] = '\0';
-							printf("From %s:%d ->[%s]\n",inet_ntoa(client.list[index].sin_addr), client.list[index].sin_port, buff);
+							printf("Connect %d:%s:%d ->[%s]\n", index->info.fd, inet_ntoa(index->info.sin_addr), index->info.sin_port, buff);
 							if(!strncmp(buff, "TIME", 4))
 							{
 								now = time(NULL);		/* 当前时间 */
 								/* 将时间复制入缓冲区 */
 								sprintf(buff, "%24s\r\n", ctime(&now));
 								/* 发送数据 */
-								send(client.list[index].fd, buff, strlen(buff), 0);
+								send(index->info.fd, buff, strlen(buff), 0);
 							}
 						}
 						else if(nByte <= 0)
 						{
-							printf("Disconnect from %s:%d\n",inet_ntoa(client.list[index].sin_addr), client.list[index].sin_port);
+							printf("Disconnect %d:%s:%d\n", index->info.fd, inet_ntoa(index->info.sin_addr), index->info.sin_port);
+
+							/* 客户端退出，释放其占用的内存资源 */
+							client_unregister(index->info.fd);
 							/* 关闭客户端 */
-							close(client.list[index].fd);
-							client.num--;	/* 客户端计数器减1 */	
-							/* 更新文件描述符在数组中的值 */
-							client.list[index].fd = -1;
+							close(index->info.fd);
 						}
 					}
 				}
@@ -125,22 +207,11 @@ static void *handle_connect(void *argv)
 	{
 		s_c = accept(s_s, (struct sockaddr*)&from, &len);
 		/* 接收客户端的请求 */
-		printf("Connect from %s:%d\n",inet_ntoa(from.sin_addr), from.sin_port);
-		/* 查找合适位置，将客户端的文件描述符放入 */				
-		for(index = 0; index < CLIENT_NUM; index++)
-		{
-			if(client.list[index].fd == -1)			/* 找到 */
-			{
-				/* 放入 */
-				client.list[index].fd = s_c;
-				memcpy(&client.list[index].sin_addr, &from.sin_addr, sizeof(struct in_addr));
-				client.list[index].sin_port = from.sin_port;
-				/* 客户端计数器加1 */
-				client.num ++;
-				/* 继续轮询等待客户端连接 */
-				break;						
-			}	
-		}		
+		printf("Connect from %d:%s:%d\n", s_c, inet_ntoa(from.sin_addr), from.sin_port);
+		
+		/* 注册新的客户端到链表 */
+		if(new_client_register(s_c, from.sin_port, from.sin_addr) < 0)
+			printf("New client register faild!\n");	
 	}	
 	return NULL;
 }
@@ -152,8 +223,6 @@ int main(int argc, char *argv[])
 	struct sockaddr_in local;				/* 本地地址 */	
 	int index = 0;
 	pthread_t  thread_do[2];				/* 线程ID */
-	
-	memset(&client.list[0], -1, sizeof(client.list[0]) * CLIENT_NUM);
 	
 	/* 建立TCP套接字 */
 	s_s = socket(AF_INET, SOCK_STREAM, 0);
@@ -191,4 +260,6 @@ int main(int argc, char *argv[])
 	
 	return 0;
 }
+
+
 
