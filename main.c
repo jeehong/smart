@@ -1,15 +1,17 @@
 #include <stdlib.h>
-#include <sys/types.h>
-#include <sys/socket.h>
+#include <string.h>
+#include <stdio.h>
+
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <time.h>
-#include <string.h>
-#include <stdio.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <sys/select.h>
-
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/wait.h>  
+#include <sys/types.h> 
 
 #define BUFF_LEN 		1024
 #define SERVER_PORT 	51000		/* 服务器端口号 */
@@ -28,10 +30,12 @@ typedef struct _client_list
 	struct _client_list *pnext;
 } CLIENT_LIST_t;
 
+
 /* 
  * 可连接客户端的文件描述符数组 
  */
 static CLIENT_LIST_t *pclient = NULL;
+static int s_server;	/* 服务器套接字文件描述符 */
 
 /*
  * 0: success
@@ -104,11 +108,9 @@ static int client_unregister(const int sock)
 				else
 					pre->pnext = rmobj->pnext;				
 			}
-	
 			free((CLIENT_LIST_t *)rmobj);
 			break;
 		}
-		
 		pre = index;
 	}
 	printf("Current member: ");
@@ -166,7 +168,7 @@ static void *handle_request(void *argv)
 						if(nByte > 0)
 						{
 							buff[nByte] = '\0';
-							printf("Connect %d:%s:%d ->[%s]\n", index->info.fd, inet_ntoa(index->info.sin_addr), index->info.sin_port, buff);
+							printf("Data %d:%s:%d -> [%s]\n", index->info.fd, inet_ntoa(index->info.sin_addr), index->info.sin_port, buff);
 							if(!strncmp(buff, "TIME", 4))
 							{
 								now = time(NULL);		/* 当前时间 */
@@ -178,7 +180,7 @@ static void *handle_request(void *argv)
 						}
 						else if(nByte <= 0)
 						{
-							printf("Disconnect %d:%s:%d\n", index->info.fd, inet_ntoa(index->info.sin_addr), index->info.sin_port);
+							printf("Exit %d:%s:%d\n", index->info.fd, inet_ntoa(index->info.sin_addr), index->info.sin_port);
 
 							/* 客户端退出，释放其占用的内存资源 */
 							client_unregister(index->info.fd);
@@ -205,7 +207,7 @@ static void *handle_connect(void *argv)
 	/* 接收客户端连接 */
 	for(;;)
 	{
-		s_c = accept(s_s, (struct sockaddr*)&from, &len);
+		s_c = accept(s_server, (struct sockaddr*)&from, &len);
 		/* 接收客户端的请求 */
 		printf("Connect from %d:%s:%d\n", s_c, inet_ntoa(from.sin_addr), from.sin_port);
 		
@@ -216,16 +218,26 @@ static void *handle_connect(void *argv)
 	return NULL;
 }
 
+void server_exit(int signo)
+{  
+    printf("Goodbye!\n");  
+	close(s_server);
+    _exit(0);  
+}
 
 int main(int argc, char *argv[])
-{
-	int s_s;								/* 服务器套接字文件描述符 */
+{ 
+	/* char bReuseaddr = 1; */
 	struct sockaddr_in local;				/* 本地地址 */	
 	int index = 0;
 	pthread_t  thread_do[2];				/* 线程ID */
-	
+	struct linger so_linger = {
+		.l_onoff = 1,
+		.l_linger = 0,
+	};
+	signal(SIGINT, server_exit);
 	/* 建立TCP套接字 */
-	s_s = socket(AF_INET, SOCK_STREAM, 0);
+	s_server = socket(AF_INET, SOCK_STREAM, 0);
 	
 	/* 初始化地址 */
 	memset(&local, 0, sizeof(local));			/* 清零 */
@@ -233,20 +245,23 @@ int main(int argc, char *argv[])
 	local.sin_addr.s_addr = htonl(INADDR_ANY);	/* 任意本地地址 */
 	local.sin_port = htons(SERVER_PORT);		/* 服务器端口 */
 	printf("Server listen port %d...\n", SERVER_PORT);
+	
+	/* setsockopt(s_server, SOL_SOCKET , SO_REUSEADDR, (const char *)&bReuseaddr,sizeof(char)); */
+	setsockopt(s_server, SOL_SOCKET, SO_LINGER, &so_linger, sizeof so_linger);
 	/* 将套接字文件描述符绑定到本地地址和端口 */
-	bind(s_s, (struct sockaddr*)&local, sizeof(local));
+	bind(s_server, (struct sockaddr*)&local, sizeof(local));
 	
 	/* listen()用来等待参数s_s的socket连线。
 	 * 参数backlog指定同时能处理的最大连接要求，
 	 * 如果连接数目达此上限则client端将收到ECONNREFUSED的错误 
 	 */
-	listen(s_s, BACKLOG);						/* 侦听 */
+	listen(s_server, BACKLOG);						/* 侦听 */
 	
 	/* 创建线程处理客户端连接 */
 	pthread_create(&thread_do[0],				/* 线程ID */
 					NULL,						/* 属性 */
 					handle_connect,				/* 线程回调函数 */
-					(void*)&s_s);				/* 线程参数 */
+					(void*)&s_server);				/* 线程参数 */
 	/* 创建线程处理客户端请求 */					
 	pthread_create(&thread_do[1],				/* 线程ID */
 					NULL,						/* 属性 */
@@ -255,11 +270,6 @@ int main(int argc, char *argv[])
 	/* 等待线程结束 */
 	for(index = 0; index < 2; index++)
 		pthread_join(thread_do[index], NULL);
-	
-	close(s_s);
-	
+
 	return 0;
 }
-
-
-
