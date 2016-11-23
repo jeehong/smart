@@ -10,6 +10,13 @@
 /* Define to 1 if you have the <inttypes.h> header file. */
 #define HAVE_INTTYPES_H 1
 
+/* Define to 1 if you have the `pthread' library (-lpthread). */
+#define HAVE_LIBPTHREAD 1
+
+/* Define to 1 if your system has a GNU libc compatible `malloc' function, and
+   to 0 otherwise. */
+#define HAVE_MALLOC 0
+
 /* Define to 1 if you have the <memory.h> header file. */
 #define HAVE_MEMORY_H 1
 
@@ -75,3 +82,6 @@
 
 /* Version number of package */
 #define VERSION "0.1"
+
+/* Define to rpl_malloc if the replacement function should be used. */
+#define malloc rpl_malloc

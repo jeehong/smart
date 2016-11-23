@@ -1,5 +1,9 @@
 AUTOMAKE_OPTIONS=foreign
-bin_PROGRAMS=server
-server_SOURCES=main.c
+SUBDIRS=app
 
+# automake need known where it is
+# CURRENT_PATH= $(shell pwd)
+
+# head files while linking
+# INCLUDES= -I$(CURRENT_PATH)/app
 LIBS += -lpthread
