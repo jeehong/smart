@@ -15,7 +15,7 @@
 
 #define BUFF_LEN 		1024
 #define SERVER_PORT 	51000		/* 服务器端口号 */
-#define BACKLOG 		5
+#define BACKLOG 		5			/* 确定connection队列可以增长的最大长度 */
 
 typedef struct _client_info
 {
@@ -113,21 +113,16 @@ static int client_unregister(const int sock)
 		}
 		pre = index;
 	}
-	printf("Current member: ");
-	index = pclient;	
-	while(index != NULL) 	/* 永远指向最后一个链表成员 */
-	{
-		printf("%d ", index->info.fd);
-		index = index->pnext;
-	}
-	printf("\n");
 }
 
+/*
+ * 处理客户端服务请求
+ */
 static void *handle_request(void *argv)
 {	
 	CLIENT_LIST_t *index = NULL;
 	time_t now;									/* 时间 */
-	char buff[BUFF_LEN];						/* 收发数据缓冲区 */
+	char rcv_data[BUFF_LEN];						/* 收发数据缓冲区 */
 	int nByte = 0;
 	int maxfd = -1;								/* 最大侦听文件描述符 */
 	fd_set scan_fd;								/* 侦听描述符集合 */
@@ -163,19 +158,21 @@ static void *handle_request(void *argv)
 					/* 查找激活的文件描述符 */
 					if(FD_ISSET(index->info.fd, &scan_fd))
 					{
-						nByte = recv(index->info.fd, buff, BUFF_LEN, 0);
+						nByte = recv(index->info.fd, rcv_data, BUFF_LEN, 0);
 						/* 接收发送方数据 */
 						if(nByte > 0)
 						{
-							buff[nByte] = '\0';
-							printf("Data %d:%s:%d -> [%s]\n", index->info.fd, inet_ntoa(index->info.sin_addr), index->info.sin_port, buff);
-							if(!strncmp(buff, "TIME", 4))
+							rcv_data[nByte] = '\0';
+							printf("Data %d:%s:%d -> [%s]\n", index->info.fd, inet_ntoa(index->info.sin_addr), index->info.sin_port, rcv_data);
+							
+							
+							if(!strncmp(rcv_data, "TIME", 4))
 							{
 								now = time(NULL);		/* 当前时间 */
 								/* 将时间复制入缓冲区 */
-								sprintf(buff, "%24s\r\n", ctime(&now));
+								sprintf(rcv_data, "%24s", ctime(&now));
 								/* 发送数据 */
-								send(index->info.fd, buff, strlen(buff), 0);
+								send(index->info.fd, rcv_data, strlen(rcv_data), 0);
 							}
 						}
 						else if(nByte <= 0)
@@ -196,6 +193,9 @@ static void *handle_request(void *argv)
 	return NULL;
 }
 
+/*
+ * 处理客户端连接请求
+ */
 static void *handle_connect(void *argv)
 {	
 	int s_s = *((int*)argv);			/* 获得服务器侦听套接字文件描述符 */
@@ -227,7 +227,6 @@ void server_exit(int signo)
 
 int main(int argc, char *argv[])
 { 
-	/* char bReuseaddr = 1; */
 	struct sockaddr_in local;				/* 本地地址 */	
 	int index = 0;
 	pthread_t  thread_do[2];				/* 线程ID */
@@ -244,24 +243,24 @@ int main(int argc, char *argv[])
 	local.sin_family = AF_INET;					/* AF_INET协议族 */
 	local.sin_addr.s_addr = htonl(INADDR_ANY);	/* 任意本地地址 */
 	local.sin_port = htons(SERVER_PORT);		/* 服务器端口 */
-	printf("Server listen port %d...\n", SERVER_PORT);
+	printf("Server listen port %d ...\n", SERVER_PORT);
 	
-	/* setsockopt(s_server, SOL_SOCKET , SO_REUSEADDR, (const char *)&bReuseaddr,sizeof(char)); */
 	setsockopt(s_server, SOL_SOCKET, SO_LINGER, &so_linger, sizeof so_linger);
 	/* 将套接字文件描述符绑定到本地地址和端口 */
 	bind(s_server, (struct sockaddr*)&local, sizeof(local));
 	
-	/* listen()用来等待参数s_s的socket连线。
+	/* 
+	 * listen()用来等待参数s_s的socket连线。
 	 * 参数backlog指定同时能处理的最大连接要求，
 	 * 如果连接数目达此上限则client端将收到ECONNREFUSED的错误 
 	 */
-	listen(s_server, BACKLOG);						/* 侦听 */
+	listen(s_server, BACKLOG);					/* 侦听 */
 	
 	/* 创建线程处理客户端连接 */
 	pthread_create(&thread_do[0],				/* 线程ID */
 					NULL,						/* 属性 */
 					handle_connect,				/* 线程回调函数 */
-					(void*)&s_server);				/* 线程参数 */
+					(void*)&s_server);			/* 线程参数 */
 	/* 创建线程处理客户端请求 */					
 	pthread_create(&thread_do[1],				/* 线程ID */
 					NULL,						/* 属性 */
