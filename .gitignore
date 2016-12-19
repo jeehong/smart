@@ -36,7 +36,7 @@
 *.su
 
 # target files
-server
+smart
 
 # http://www.gnu.org/software/automake
 Makefile.in

@@ -165,7 +165,6 @@ static void *handle_request(void *argv)
 							rcv_data[nByte] = '\0';
 							printf("Data %d:%s:%d -> [%s]\n", index->info.fd, inet_ntoa(index->info.sin_addr), index->info.sin_port, rcv_data);
 							
-							
 							if(!strncmp(rcv_data, "TIME", 4))
 							{
 								now = time(NULL);		/* 当前时间 */
