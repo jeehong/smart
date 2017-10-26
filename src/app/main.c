@@ -13,41 +13,50 @@
 #include <sys/wait.h>  
 #include <sys/types.h> 
 
+#define PROJECT_NAME	"Smart"
+#define VERSION			"0.0.1"
 #define BUFF_LEN 		1024
-#define SERVER_PORT 	51000		/* 服务器端口号 */
+#define SERVER_PORT_DEF 51000		/* 服务器端口号 */
 #define BACKLOG 		5			/* 确定connection队列可以增长的最大长度 */
 
-typedef struct _client_info
+struct _client_info_t
 {
 	int fd; 					/* 客户端socket套接字 */
 	unsigned short sin_port;	/* 客户端port */
     struct in_addr sin_addr;	/* 客户端IP */
-} CLIENT_INFO_t;
+};
 
-typedef struct _client_list
+struct server_cfg_t
 {
-	CLIENT_INFO_t info;	
-	struct _client_list *pnext;
-} CLIENT_LIST_t;
+	struct sockaddr_in local;
+	unsigned short s_port;
+	int fd;
+};
+
+struct _client_list_t
+{
+	struct _client_info_t info;	
+	struct _client_list_t *pnext;
+};
 
 
 /* 
  * 可连接客户端的文件描述符数组 
  */
-static CLIENT_LIST_t *pclient = NULL;
-static int s_server;	/* 服务器套接字文件描述符 */
+static struct _client_list_t *pclient = NULL;
+static struct server_cfg_t server;	/* 服务器套接字文件描述符 */
 
 /*
  * 0: success
  * -1: error
  */
-static int new_client_register(int fd, unsigned short port, struct in_addr ip)
+static int client_register(int fd, unsigned short port, struct in_addr ip)
 {
-    static CLIENT_LIST_t *plistlast = NULL;	
-    CLIENT_LIST_t *plistnew = NULL;
+    static struct _client_list_t *plistlast = NULL;	
+    struct _client_list_t *plistnew = NULL;
     int ret = -1;
 	
-	plistnew = (CLIENT_LIST_t *)malloc(sizeof(CLIENT_LIST_t));
+	plistnew = (struct _client_list_t *)malloc(sizeof(struct _client_list_t));
 	if(plistnew != NULL)
 	{
 		if(pclient == NULL)
@@ -83,9 +92,9 @@ static int new_client_register(int fd, unsigned short port, struct in_addr ip)
  */
 static int client_unregister(const int sock)
 {
-	CLIENT_LIST_t *index = pclient;
-	CLIENT_LIST_t *rmobj = NULL;	/* 需要移除的节点 */
-	CLIENT_LIST_t *pre = pclient;
+	struct _client_list_t *index = pclient;
+	struct _client_list_t *rmobj = NULL;	/* 需要移除的节点 */
+	struct _client_list_t *pre = pclient;
 
 	for(; index != NULL; index = index->pnext)
 	{
@@ -108,7 +117,7 @@ static int client_unregister(const int sock)
 				else
 					pre->pnext = rmobj->pnext;				
 			}
-			free((CLIENT_LIST_t *)rmobj);
+			free((struct _client_list_t *)rmobj);
 			break;
 		}
 		pre = index;
@@ -120,16 +129,16 @@ static int client_unregister(const int sock)
  */
 static void *handle_request(void *argv)
 {	
-	CLIENT_LIST_t *index = NULL;
-	time_t now;									/* 时间 */
-	char rcv_data[BUFF_LEN];						/* 收发数据缓冲区 */
+	struct _client_list_t *index = NULL;
+	time_t now;								/* 时间 */
+	char rcv_data[BUFF_LEN];				/* 收发数据缓冲区 */
 	int nByte = 0;
-	int maxfd = -1;								/* 最大侦听文件描述符 */
-	fd_set scan_fd;								/* 侦听描述符集合 */
+	int maxfd = -1;							/* 最大侦听文件描述符 */
+	fd_set scan_fd;							/* 侦听描述符集合 */
 	/* 阻塞1s后超时返回 */ 
 	struct timeval timeout = {
-		.tv_sec = 1, 
-		.tv_usec = 0}; 					     
+		.tv_sec = 1,
+		.tv_usec = 0};	     
 	int err  = -1;
 	
 	for(;;)
@@ -206,12 +215,12 @@ static void *handle_connect(void *argv)
 	/* 接收客户端连接 */
 	for(;;)
 	{
-		s_c = accept(s_server, (struct sockaddr*)&from, &len);
+		s_c = accept(server.fd, (struct sockaddr*)&from, &len);
 		/* 接收客户端的请求 */
 		printf("Connect from %d:%s:%d\n", s_c, inet_ntoa(from.sin_addr), from.sin_port);
 		
 		/* 注册新的客户端到链表 */
-		if(new_client_register(s_c, from.sin_port, from.sin_addr) < 0)
+		if(client_register(s_c, from.sin_port, from.sin_addr) < 0)
 			printf("New client register faild!\n");	
 	}	
 	return NULL;
@@ -220,54 +229,112 @@ static void *handle_connect(void *argv)
 void server_exit(int signo)
 {  
     printf("Goodbye!\n");  
-	close(s_server);
-    _exit(0);  
+	close(server.fd);
+    _exit(0);
 }
 
-int main(int argc, char *argv[])
-{ 
-	struct sockaddr_in local;				/* 本地地址 */	
-	int index = 0;
-	pthread_t  thread_do[2];				/* 线程ID */
+
+
+void param_init_check()
+{
+	if(server.s_port == 0)
+		server.s_port = SERVER_PORT_DEF;
+}
+
+static void usage(void)
+{
+    printf("  -p <port>      set service port.\n");
+	printf("  -h             list all the parame.\n");
+}
+
+static int config_prase(int argc, char *argv[])
+{
+    int  c;
+	
+    opterr = 0;
+    while (-1 != (c = getopt(argc, argv,
+         "p:"
+         "h"  /* help, licence info */
+         "v"  /* version */
+        )))
+	{
+        switch (c) {
+            case 'p':
+				server.s_port = atoi(optarg);
+				break;
+            case 'v':
+                printf ("%s version %s\n", PROJECT_NAME, VERSION);
+				return -1;
+			case 'h':
+				usage();
+				return -1;
+            default:
+                fprintf(stderr, "%s: illegal argument \"%c\"\n", PROJECT_NAME, optopt);
+				printf("Input '-h' to view available functions.\n");
+				return -1;
+        }
+    }
+	return 0;
+}
+
+static void server_init(void)
+{
 	struct linger so_linger = {
 		.l_onoff = 1,
 		.l_linger = 0,
 	};
+
 	signal(SIGINT, server_exit);
 	/* 建立TCP套接字 */
-	s_server = socket(AF_INET, SOCK_STREAM, 0);
-	
+	server.fd = socket(AF_INET, SOCK_STREAM, 0);
 	/* 初始化地址 */
-	memset(&local, 0, sizeof(local));			/* 清零 */
-	local.sin_family = AF_INET;					/* AF_INET协议族 */
-	local.sin_addr.s_addr = htonl(INADDR_ANY);	/* 任意本地地址 */
-	local.sin_port = htons(SERVER_PORT);		/* 服务器端口 */
-	printf("Server listen port %d ...\n", SERVER_PORT);
-	
-	setsockopt(s_server, SOL_SOCKET, SO_LINGER, &so_linger, sizeof so_linger);
+	memset(&server.local, 0, sizeof(server.local));		/* 清零 */
+	server.local.sin_family = AF_INET;					/* AF_INET协议族 */
+	server.local.sin_addr.s_addr = htonl(INADDR_ANY);	/* 任意本地地址 */
+	server.local.sin_port = htons(server.s_port);		/* 服务器端口 */
+	printf("Server listen port %d ...\n", server.s_port);
+	setsockopt(server.fd, SOL_SOCKET, SO_LINGER, &so_linger, sizeof so_linger);
 	/* 将套接字文件描述符绑定到本地地址和端口 */
-	bind(s_server, (struct sockaddr*)&local, sizeof(local));
-	
+	bind(server.fd, (struct sockaddr*)&server.local, sizeof(server.local));
 	/* 
 	 * listen()用来等待参数s_s的socket连线。
 	 * 参数backlog指定同时能处理的最大连接要求，
 	 * 如果连接数目达此上限则client端将收到ECONNREFUSED的错误 
 	 */
-	listen(s_server, BACKLOG);					/* 侦听 */
+	listen(server.fd, BACKLOG);					/* 侦听 */	
+}
+
+void app_init(void)
+{
+	param_init_check();
+	server_init();
+}
+
+int main(int argc, char *argv[])
+{ 
+	int index = 0;
+	pthread_t  thread_do[2];				/* 线程ID */
+	
+	if(config_prase(argc, argv) == -1) {
+		return -1;
+	}
+	app_init();
 	
 	/* 创建线程处理客户端连接 */
-	pthread_create(&thread_do[0],				/* 线程ID */
-					NULL,						/* 属性 */
-					handle_connect,				/* 线程回调函数 */
-					(void*)&s_server);			/* 线程参数 */
-	/* 创建线程处理客户端请求 */					
-	pthread_create(&thread_do[1],				/* 线程ID */
-					NULL,						/* 属性 */
-					handle_request,				/* 线程回调函数 */
-					NULL);						/* 线程参数 */
+	pthread_create(&thread_do[0],			/* 线程ID */
+					NULL,					/* 属性 */
+					handle_connect,			/* 线程回调函数 */
+					(void*)&server.fd);		/* 线程参数 */
+	/* 创建线程处理客户端请求 */
+	pthread_create(&thread_do[1],			/* 线程ID */
+					NULL,					/* 属性 */
+					handle_request,			/* 线程回调函数 */
+					NULL);					/* 线程参数 */
 	/* 等待线程结束 */
 	for(index = 0; index < 2; index++)
 		pthread_join(thread_do[index], NULL);
 
 	return 0;
 }
+
+
